@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Tests/Tests.csproj" Id="387c7a08-f8a7-429c-afdf-1265a36dd70a" />
+  <Project Path="YetAnotherXiaomiCloudClient/YetAnotherXiaomiCloudClient.csproj" />
+</Solution>
