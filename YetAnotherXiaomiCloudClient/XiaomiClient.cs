@@ -1,14 +1,8 @@
-using Flurl;
 using Flurl.Http;
-using System;
-using System.Collections.Generic;
-using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Threading.Tasks;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace YetAnotherXiaomiCloudClient
 {
@@ -52,35 +46,29 @@ namespace YetAnotherXiaomiCloudClient
 
     public class XiaomiClient
     {
-        private readonly HttpClient _http;
         public string Sid { get; }
         public string Cookies { get; set; }
         public long UserId { get; set; }
         public byte[] Ssecurity { get; set; }
         public string PassToken { get; set; }
-        private CookieJar _cookiesJar { get; set; }
 
         public XiaomiClient(string app)
         {
-            _http = new HttpClient { Timeout = TimeSpan.FromMinutes(1) };
             Sid = app;
         }
 
-        // LoginWithToken helpers
-        // token format: "{userId}:{passToken}" (e.g. "123456:abcdef...")
-        public void LoginWithToken(string token)
+        public async Task<bool> IsTokenValid(long userId, string passToken)
         {
-            if (string.IsNullOrEmpty(token)) throw new ArgumentException("token is empty", nameof(token));
-
-            var idx = token.IndexOf(':');
-            if (idx <= 0 || idx == token.Length - 1) throw new ArgumentException("token must be in format '{userId}:{passToken}'", nameof(token));
-
-            var uidPart = token.Substring(0, idx);
-            var pass = token.Substring(idx + 1);
-
-            if (!long.TryParse(uidPart, out var uid)) throw new ArgumentException("invalid userId in token", nameof(token));
-
-            LoginWithToken(uid, pass);
+            try
+            {
+                await LoginWithToken(userId, passToken);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                // ignore any error, just return false
+                return false;
+            }
         }
 
         public async Task LoginWithToken(long userId, string passToken)
@@ -92,24 +80,23 @@ namespace YetAnotherXiaomiCloudClient
                 .WithHeader("User-Agent", "iqmevrwsojypkevwmr-DACACBDADADCC APP/com.xiaomi.mihome APPV/10.5.201")
                 .WithHeader("Content-Type", "application/x-www-form-urlencoded")
                 .WithHeader("Cookie", $"userId={userId}; passToken={passToken}")
-                .WithCookies(out var jar)
                 .GetAsync()
                 .ReceiveString();
 
             var skippedStartString = loginResultRaw.Substring(11);
 
             var loginResult = JsonSerializer.Deserialize<LoginResult>(skippedStartString);
+            if (loginResult == null)
+            {
+                throw new Exception("failed to parse login result");
+            }
 
-
-            UserId = userId;
-            PassToken = passToken;
-            _cookiesJar = jar;
-            Ssecurity = loginResult.Ssecurity;
-            // set cookies header value that will be reused by RequestAsync
+            UserId = loginResult.UserId;
+            PassToken = loginResult.PassToken;
+            Ssecurity = loginResult?.Ssecurity;
             // Cookies = $"userId={userId}; passToken={passToken}";
-            // keep using the existing HttpClient instance (_http) for requests
-
-            await ServiceLogin3Async(loginResult.Location);
+            var location = loginResult?.Location ?? throw new InvalidOperationException("login result Location is null");
+            await ServiceLogin3Async(location);
         }
 
         // Completes login by following the provided location URL and collecting Set-Cookie headers.
@@ -120,11 +107,10 @@ namespace YetAnotherXiaomiCloudClient
         {
             if (string.IsNullOrEmpty(location)) throw new ArgumentException("location is empty", nameof(location));
 
-            var res = await _http.GetAsync(location);
-            // Ensure response content is consumed so underlying connections can be reused
-            _ = await res.Content.ReadAsStringAsync();
+            var res = await location.GetAsync();
 
-            if (res.Headers.TryGetValues("Set-Cookie", out var cookies))
+            var cookies = res.Headers.GetAll("Set-Cookie") ?? Array.Empty<string>();
+            if (cookies.Any())
             {
                 foreach (var s in cookies)
                 {
@@ -136,65 +122,7 @@ namespace YetAnotherXiaomiCloudClient
             }
         }
 
-        public async Task<List<Weight>> GetModelWeights2(string region = "", string model ="")
-        {
-            var weights = new List<Weight>();
-
-            var ts = DateTimeOffset.UtcNow.AddDays(1).ToUnixTimeSeconds();
-            string parametersTemplate = "{\"endTime\":1,\"beginTime\":%begintime,\"model\":\"%model\",\"uid\":\"%userId\",\"did\":0,\"accountId\":0}";
-
-            string parameters = parametersTemplate.Replace("%begintime", ts.ToString()).Replace("%model", model).Replace("%userId", UserId.ToString());
-
-            while (true)
-            {
-                var baseUrl = MiFitnessURL(region);
-                byte[]? data;
-                try
-                {
-                    data = await RequestAsync(baseUrl, "/eco/common/scale/getUserDataByPage", parameters, new Dictionary<string, string> { { "Miot-Request-Model", model } });
-                }
-                catch (Exception ex)
-                {
-
-                    throw;
-                }
-                using var doc = JsonDocument.Parse(data);
-                var root = doc.RootElement;
-                if (!root.TryGetProperty("data_list", out var dataList))
-                    throw new Exception("unexpected response: data_list missing");
-
-                bool hasMore = false;
-                string nextKey = null;
-                if (root.TryGetProperty("has_more", out var hm) && hm.GetBoolean()) hasMore = true;
-                if (root.TryGetProperty("next_key", out var nk) && nk.ValueKind == JsonValueKind.String) nextKey = nk.GetString();
-
-
-
-                foreach (var item in dataList.EnumerateArray())
-                {
-                    var key = item.GetProperty("key").GetString();
-                    if (key != "weight") continue;
-
-                    var sid = item.GetProperty("sid").GetString();
-                    var value = item.GetProperty("value").GetString();
-
-                    // value is a JSON string
-                    Weight w = ParseWeightFromValue(value);
-                    w.Source = sid;
-                    weights.Add(w);
-                }
-
-                if (!hasMore) break;
-
-                parameters = string.Format("{\"start_time\":1,\"end_time\":%d,\"key\":\"weight\",\"next_key\":%q}", ts, nextKey);
-                // above is a close approximation of go's fmt with %q. Instead create properly:
-                parameters = "{" + $"\"start_time\":1,\"end_time\":{ts},\"key\":\"weight\",\"next_key\":\"{nextKey}\"" + "}";
-            }
-
-            return weights;
-        }
-
-        public async Task<List<Weight>> GetModelWeights(string region, string model)
+        public async Task<List<Weight>> GetModelWeights(string region, string model, int? maxEntries = null)
         {
             var weights = new List<Weight>();
 
@@ -204,7 +132,7 @@ namespace YetAnotherXiaomiCloudClient
             {
                 case "":
                 case "cn":
-                    while (ts > 0)
+                    while (ts > 0 && (maxEntries == null || weights.Count < maxEntries))
                     {
                         var parameters = $"{{\"param\":{{\"endTime\":1,\"beginTime\":{ts}}},\"model\":\"{model}\",\"uid\":{UserId},\"did\":0}}";
                         var data = await RequestAsync(
@@ -220,7 +148,7 @@ namespace YetAnotherXiaomiCloudClient
                 case "ru":
                 case "sg":
                 case "us":
-                    while (ts > 0)
+                    while (ts > 0 && (maxEntries == null || weights.Count < maxEntries))
                     {
                         var parameters = $"{{\"endTime\":1,\"beginTime\":{ts},\"model\":\"{model}\",\"uid\":\"{UserId}\",\"did\":0,\"accountId\":0}}";
                         var data = await RequestAsync(
@@ -236,46 +164,6 @@ namespace YetAnotherXiaomiCloudClient
             }
 
             return weights;
-        }
-
-        private static Weight ParseWeightFromValue(string value)
-        {
-            try
-            {
-                using var vdoc = JsonDocument.Parse(value);
-                var root = vdoc.RootElement;
-                var w = new Weight();
-
-                if (root.TryGetProperty("time", out var timeEl) && timeEl.ValueKind == JsonValueKind.Number)
-                {
-                    var t = timeEl.GetInt64();
-                    w.Date = DateTimeOffset.FromUnixTimeSeconds(t).UtcDateTime;
-                }
-                else
-                {
-                    w.Date = DateTime.UtcNow;
-                }
-
-                w.WeightKg = GetFloat(root, "weight");
-                w.BMI = GetFloat(root, "bmi");
-                w.BodyFat = GetFloat(root, "body_fat_rate");
-                w.BodyWater = GetFloat(root, "moisture_rate");
-                w.BoneMass = GetFloat(root, "bone_mass");
-                w.MetabolicAge = GetInt(root, "body_age");
-                w.MuscleMass = GetFloat(root, "muscle_mass");
-                w.ProteinMass = GetFloat(root, "protein_mass");
-                w.VisceralFat = GetInt(root, "visceral_fat");
-                w.BasalMetabolism = GetInt(root, "basal_metabolism");
-                w.BodyScore = GetInt(root, "body_score");
-                w.HeartRate = GetInt(root, "bpm");
-                w.SkeletalMuscleMass = GetFloat(root, "skeletal_muscle_mass");
-
-                return w;
-            }
-            catch
-            {
-                return new Weight { Date = DateTime.UtcNow };
-            }
         }
 
         private static float GetFloat(JsonElement el, string name)
@@ -306,23 +194,6 @@ namespace YetAnotherXiaomiCloudClient
                 default:
                     return 0;
             }
-        }
-
-        private static string MiFitnessURL(string region)
-        {
-            switch (region)
-            {
-                case "":
-                case "cn":
-                    return "https://api.io.mi.com/app";
-                case "de":
-                case "i2":
-                case "ru":
-                case "sg":
-                case "us":
-                    return "https://" + region + ".api.io.mi.com/app";
-            }
-            return string.Empty;
         }
 
         public async Task<byte[]> RequestAsync(string baseUrl, string apiUrl, string parameters, Dictionary<string, string> headers)

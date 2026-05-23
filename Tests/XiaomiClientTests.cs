@@ -9,7 +9,7 @@ namespace Tests
         [SetUp]
         public void Setup()
         {
-           
+
         }
 
         [Test]
@@ -17,12 +17,22 @@ namespace Tests
         {
             var client = new XiaomiClient("xiaomiio");
 
-          
+
             await client.LoginWithToken(_userId, _passToken);
 
-            var weigts = await client.GetModelWeights("de", "yunmai.scales.ms104");
+            var weigts = await client.GetModelWeights("de", "yunmai.scales.ms104", 3);
 
             Assert.Pass();
+        }
+
+        [Test]
+        public async Task IsTokenValidTest()
+        {
+            var client = new XiaomiClient("xiaomiio");
+
+            var isValid = await client.IsTokenValid(_userId, _passToken);
+
+            Assert.That(isValid, Is.True);
         }
     }
 }
