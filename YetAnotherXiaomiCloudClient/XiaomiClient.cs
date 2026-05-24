@@ -46,15 +46,41 @@ namespace YetAnotherXiaomiCloudClient
 
     public class XiaomiClient
     {
-        public string Sid { get; }
-        public string Cookies { get; set; }
-        public long UserId { get; set; }
-        public byte[] Ssecurity { get; set; }
-        public string PassToken { get; set; }
+        private string _sid { get; }
+        private string _cookies { get; set; }
+        private long _userId { get; set; }
+        private byte[] _ssecurity { get; set; }
+        private string _passToken { get; set; }
+        private string _agent;
 
         public XiaomiClient(string app)
         {
-            Sid = app;
+            _sid = app;
+            _agent = GenerateAgent();
+        }
+
+        // Generates a random User-Agent similar to the original Python implementation.
+        public static string GenerateAgent()
+        {
+            // agent_id: 13 characters from ASCII 65..69 (A..E)
+            var agentIdChars = new char[13];
+            for (int i = 0; i < agentIdChars.Length; i++)
+            {
+                int v = RandomNumberGenerator.GetInt32(65, 70); // upper bound exclusive
+                agentIdChars[i] = (char)v;
+            }
+
+            // random_text: 18 lowercase characters from ASCII 97..122 (a..z)
+            var randomTextChars = new char[18];
+            for (int i = 0; i < randomTextChars.Length; i++)
+            {
+                int v = RandomNumberGenerator.GetInt32(97, 123);
+                randomTextChars[i] = (char)v;
+            }
+
+            var agentId = new string(agentIdChars);
+            var randomText = new string(randomTextChars);
+            return $"{randomText}-{agentId} APP/com.xiaomi.mihome APPV/10.5.201";
         }
 
         public async Task<bool> IsTokenValid(long userId, string passToken)
@@ -77,7 +103,7 @@ namespace YetAnotherXiaomiCloudClient
 
 
             var loginResultRaw = await "https://account.xiaomi.com/pass/serviceLogin?_json=true&sid=xiaomiio"
-                .WithHeader("User-Agent", "iqmevrwsojypkevwmr-DACACBDADADCC APP/com.xiaomi.mihome APPV/10.5.201")
+                .WithHeader("User-Agent", _agent)
                 .WithHeader("Content-Type", "application/x-www-form-urlencoded")
                 .WithHeader("Cookie", $"userId={userId}; passToken={passToken}")
                 .GetAsync()
@@ -90,10 +116,14 @@ namespace YetAnotherXiaomiCloudClient
             {
                 throw new Exception("failed to parse login result");
             }
+            if (loginResult.Result != "ok")
+            {
+                throw new Exception("login failed: " + loginResult.Result);
+            }
 
-            UserId = loginResult.UserId;
-            PassToken = loginResult.PassToken;
-            Ssecurity = loginResult?.Ssecurity;
+            _userId = loginResult.UserId;
+            _passToken = loginResult.PassToken;
+            _ssecurity = loginResult?.Ssecurity;
             // Cookies = $"userId={userId}; passToken={passToken}";
             var location = loginResult?.Location ?? throw new InvalidOperationException("login result Location is null");
             await ServiceLogin3Async(location);
@@ -116,8 +146,8 @@ namespace YetAnotherXiaomiCloudClient
                 {
                     var cookiePair = s.Split(';', 2)[0].Trim();
                     if (string.IsNullOrEmpty(cookiePair)) continue;
-                    if (!string.IsNullOrEmpty(Cookies)) Cookies += "; ";
-                    Cookies += cookiePair;
+                    if (!string.IsNullOrEmpty(_cookies)) _cookies += "; ";
+                    _cookies += cookiePair;
                 }
             }
         }
@@ -134,7 +164,7 @@ namespace YetAnotherXiaomiCloudClient
                 case "cn":
                     while (ts > 0 && (maxEntries == null || weights.Count < maxEntries))
                     {
-                        var parameters = $"{{\"param\":{{\"endTime\":1,\"beginTime\":{ts}}},\"model\":\"{model}\",\"uid\":{UserId},\"did\":0}}";
+                        var parameters = $"{{\"param\":{{\"endTime\":1,\"beginTime\":{ts}}},\"model\":\"{model}\",\"uid\":{_userId},\"did\":0}}";
                         var data = await RequestAsync(
                             "https://api.io.mi.com/app", "/eco/scale/getData", parameters,
                             new Dictionary<string, string> { { "MIOT-REQUEST-MODEL", model } }
@@ -150,7 +180,7 @@ namespace YetAnotherXiaomiCloudClient
                 case "us":
                     while (ts > 0 && (maxEntries == null || weights.Count < maxEntries))
                     {
-                        var parameters = $"{{\"endTime\":1,\"beginTime\":{ts},\"model\":\"{model}\",\"uid\":\"{UserId}\",\"did\":0,\"accountId\":0}}";
+                        var parameters = $"{{\"endTime\":1,\"beginTime\":{ts},\"model\":\"{model}\",\"uid\":\"{_userId}\",\"did\":0,\"accountId\":0}}";
                         var data = await RequestAsync(
                             $"https://{region}.api.io.mi.com/app", "/eco/common/scale/getUserDataByPage", parameters,
                             new Dictionary<string, string> { { "MIOT-REQUEST-MODEL", model } }
@@ -205,7 +235,7 @@ namespace YetAnotherXiaomiCloudClient
 
             var nonce = GenNonce();
 
-            var signedNonce = GenSignedNonce(Ssecurity, nonce);
+            var signedNonce = GenSignedNonce(_ssecurity, nonce);
 
             // 1. gen hash for data param using plain data
             values["rc4_hash__"] = GenSignature64("POST", apiUrl, values, signedNonce);
@@ -238,7 +268,7 @@ namespace YetAnotherXiaomiCloudClient
             var rawResult = await url
                .WithHeader("User-Agent", "iqmevrwsojypkevwmr-DACACBDADADCC APP/com.xiaomi.mihome APPV/10.5.201")
                .WithHeader("Content-Type", "application/x-www-form-urlencoded")
-               .WithHeader("Cookie", Cookies)
+               .WithHeader("Cookie", _cookies)
                .WithHeaders(headers)
                .PostUrlEncodedAsync(requestContent)
                .ReceiveString();

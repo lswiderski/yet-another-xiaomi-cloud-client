@@ -22,7 +22,7 @@ namespace Tests
 
             var weigts = await client.GetModelWeights("de", "yunmai.scales.ms104", 3);
 
-            Assert.Pass();
+            Assert.That(weigts.Count > 0, Is.True);
         }
 
         [Test]
