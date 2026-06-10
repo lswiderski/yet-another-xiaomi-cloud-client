@@ -34,5 +34,21 @@ namespace Tests
 
             Assert.That(isValid, Is.True);
         }
+
+
+        [Test]
+        public async Task AuthorizationTest()
+        {
+            var authorization = new XiaomiClientAuthorization();
+
+
+            var result = await authorization.LoginAsync();
+
+
+            Assert.That(authorization.PassToken, !Is.Null);
+           // Assert.That(result, Is.True);
+        }
+
+        
     }
 }
