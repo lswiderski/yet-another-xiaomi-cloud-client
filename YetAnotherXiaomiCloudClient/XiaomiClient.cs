@@ -52,12 +52,14 @@ namespace YetAnotherXiaomiCloudClient
         private byte[] _ssecurity { get; set; }
         private string _passToken { get; set; }
         private string _agent;
+        public bool IsAuthenticated { get; private set; } = false;
 
         public XiaomiClient(string app)
         {
             _sid = app;
             _agent = GenerateAgent();
         }
+
 
         // Generates a random User-Agent similar to the original Python implementation.
         public static string GenerateAgent()
@@ -124,6 +126,7 @@ namespace YetAnotherXiaomiCloudClient
             _userId = loginResult.UserId;
             _passToken = loginResult.PassToken;
             _ssecurity = loginResult?.Ssecurity;
+            IsAuthenticated = true;
             // Cookies = $"userId={userId}; passToken={passToken}";
             var location = loginResult?.Location ?? throw new InvalidOperationException("login result Location is null");
             await ServiceLogin3Async(location);
@@ -152,6 +155,32 @@ namespace YetAnotherXiaomiCloudClient
             }
         }
 
+        public async Task<string> GetModelWeightsRawJson(string region, string model)
+        {
+            var ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            byte[] data = null;
+            switch (region)
+            {
+                case "":
+                case "cn":
+                    data = await GetScalseDataChina(model, ts);
+                    break;
+
+                case "de":
+                case "i2":
+                case "ru":
+                case "sg":
+                case "us":
+                   data = await GetScaleDataGlobal(region, model, ts);
+                    break;
+
+                default:
+                    throw new ArgumentException($"xiaomi: unsupported region: {region}");
+            }
+            string json = Encoding.UTF8.GetString(data);
+            return json;
+        }
+
         public async Task<List<Weight>> GetModelWeights(string region, string model, int? maxEntries = null)
         {
             var weights = new List<Weight>();
@@ -164,11 +193,7 @@ namespace YetAnotherXiaomiCloudClient
                 case "cn":
                     while (ts > 0 && (maxEntries == null || weights.Count < maxEntries))
                     {
-                        var parameters = $"{{\"param\":{{\"endTime\":1,\"beginTime\":{ts}}},\"model\":\"{model}\",\"uid\":{_userId},\"did\":0}}";
-                        var data = await RequestAsync(
-                            "https://api.io.mi.com/app", "/eco/scale/getData", parameters,
-                            new Dictionary<string, string> { { "MIOT-REQUEST-MODEL", model } }
-                        );
+                        byte[] data = await GetScalseDataChina(model, ts);
                         ts = UnmarshalScaleData(data, weights);
                     }
                     break;
@@ -180,11 +205,7 @@ namespace YetAnotherXiaomiCloudClient
                 case "us":
                     while (ts > 0 && (maxEntries == null || weights.Count < maxEntries))
                     {
-                        var parameters = $"{{\"endTime\":1,\"beginTime\":{ts},\"model\":\"{model}\",\"uid\":\"{_userId}\",\"did\":0,\"accountId\":0}}";
-                        var data = await RequestAsync(
-                            $"https://{region}.api.io.mi.com/app", "/eco/common/scale/getUserDataByPage", parameters,
-                            new Dictionary<string, string> { { "MIOT-REQUEST-MODEL", model } }
-                        );
+                        byte[] data = await GetScaleDataGlobal(region, model, ts);
                         ts = UnmarshalScaleData(data, weights);
                     }
                     break;
@@ -194,6 +215,26 @@ namespace YetAnotherXiaomiCloudClient
             }
 
             return weights;
+        }
+
+        private async Task<byte[]> GetScalseDataChina(string model, long ts)
+        {
+            var parameters = $"{{\"param\":{{\"endTime\":1,\"beginTime\":{ts}}},\"model\":\"{model}\",\"uid\":{_userId},\"did\":0}}";
+            var data = await RequestAsync(
+                "https://api.io.mi.com/app", "/eco/scale/getData", parameters,
+                new Dictionary<string, string> { { "MIOT-REQUEST-MODEL", model } }
+            );
+            return data;
+        }
+
+        private async Task<byte[]> GetScaleDataGlobal(string region, string model, long ts)
+        {
+            var parameters = $"{{\"endTime\":1,\"beginTime\":{ts},\"model\":\"{model}\",\"uid\":\"{_userId}\",\"did\":0,\"accountId\":0}}";
+            var data = await RequestAsync(
+                $"https://{region}.api.io.mi.com/app", "/eco/common/scale/getUserDataByPage", parameters,
+                new Dictionary<string, string> { { "MIOT-REQUEST-MODEL", model } }
+            );
+            return data;
         }
 
         private static float GetFloat(JsonElement el, string name)
