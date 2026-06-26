@@ -28,6 +28,8 @@ namespace YetAnotherXiaomiCloudClient
         private string? _longPollingUrl;
         private int _timeout;
 
+        public string? LoginUrl => _loginUrl;
+
         public XiaomiClientAuthorization()
         {
             _agent = GenerateAgent();
@@ -89,7 +91,7 @@ namespace YetAnotherXiaomiCloudClient
         /// <summary>
         /// Step 1: Get login message with QR code URL and long polling URL
         /// </summary>
-        private async Task<bool> LoginStep1Async()
+        public async Task<bool> LoginStep1Async()
         {
             System.Diagnostics.Debug.WriteLine("login_step_1");
             const string url = "https://account.xiaomi.com/longPolling/loginUrl";
@@ -176,7 +178,7 @@ namespace YetAnotherXiaomiCloudClient
         /// Step 3: Long polling for QR scan result and extract tokens
         /// Maximum 10 timeout attempts allowed before throwing exception.
         /// </summary>
-        private async Task<bool> LoginStep3Async()
+        public async Task<bool> LoginStep3Async()
         {
             System.Diagnostics.Debug.WriteLine("login_step_3");
 
@@ -273,7 +275,7 @@ namespace YetAnotherXiaomiCloudClient
         /// <summary>
         /// Step 4: Fetch service token from location URL
         /// </summary>
-        private async Task<bool> LoginStep4Async()
+        public async Task<bool> LoginStep4Async()
         {
             System.Diagnostics.Debug.WriteLine("login_step_4");
             System.Diagnostics.Debug.WriteLine("Fetching service token...");
