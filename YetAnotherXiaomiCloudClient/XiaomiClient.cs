@@ -10,6 +10,7 @@ namespace YetAnotherXiaomiCloudClient
     {
         public DateTime Date { get; set; }
         public float WeightKg { get; set; }
+        public float Height { get; set; }
         public float BMI { get; set; }
         public float BodyFat { get; set; }
         public float BodyWater { get; set; }
@@ -494,7 +495,7 @@ namespace YetAnotherXiaomiCloudClient
                 {
                     if (userEl.TryGetProperty("name", out var nameEl) && nameEl.ValueKind == JsonValueKind.String)
                         w.User = nameEl.GetString();
-                    w.WeightKg = ParseAnyFloat(userEl, "height");
+                    w.Height = ParseAnyFloat(userEl, "height");
                 }
 
                 weights.Add(w);
@@ -535,7 +536,7 @@ namespace YetAnotherXiaomiCloudClient
                     if (userEl.TryGetProperty("name", out var nameEl) && nameEl.ValueKind == JsonValueKind.String)
                         w.User = nameEl.GetString();
                     if (userEl.TryGetProperty("height", out var heightEl))
-                        w.WeightKg = ParseAnyFloat(userEl, "height");
+                        w.Height = ParseAnyFloat(userEl, "height");
                     if (userEl.TryGetProperty("deviceId", out var deviceIdEl) && deviceIdEl.ValueKind == JsonValueKind.String)
                         w.Source = deviceIdEl.GetString();
                 }
