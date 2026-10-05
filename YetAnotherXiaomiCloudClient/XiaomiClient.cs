@@ -6,6 +6,14 @@ using System.Text.Json.Serialization;
 
 namespace YetAnotherXiaomiCloudClient
 {
+    public class RawWeightResult
+    {
+        public string Json { get; set; }
+        public byte[] Data { get; set; }
+        public string DownloadError { get; set; }
+        public string ParsingError { get; set; }
+    }
+
     public class Weight
     {
         public DateTime Date { get; set; }
@@ -156,30 +164,55 @@ namespace YetAnotherXiaomiCloudClient
             }
         }
 
-        public async Task<string> GetModelWeightsRawJson(string region, string model)
+        public async Task<RawWeightResult> GetModelRAWWeights(string region, string model)
         {
             var ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var result = new RawWeightResult();
             byte[] data = null;
-            switch (region)
+            try
             {
-                case "":
-                case "cn":
-                    data = await GetScalseDataChina(model, ts);
-                    break;
+                switch (region)
+                {
+                    case "":
+                    case "cn":
+                        data = await GetScalseDataChina(model, ts);
+                        break;
 
-                case "de":
-                case "i2":
-                case "ru":
-                case "sg":
-                case "us":
-                   data = await GetScaleDataGlobal(region, model, ts);
-                    break;
+                    case "de":
+                    case "i2":
+                    case "ru":
+                    case "sg":
+                    case "us":
+                        data = await GetScaleDataGlobal(region, model, ts);
+                        break;
 
-                default:
-                    throw new ArgumentException($"xiaomi: unsupported region: {region}");
+                    default:
+                        throw new ArgumentException($"xiaomi: unsupported region: {region}");
+                }
+
             }
-            string json = Encoding.UTF8.GetString(data);
-            return json;
+            catch (Exception ex)
+            {
+                result.DownloadError = ex.Message;
+            }
+          
+            result.Data = data;
+
+            try
+            {
+                if(data!= null)
+                {
+                    using var doc = JsonDocument.Parse(data);
+                    result.Json = doc?.RootElement.ToString();
+                }
+              
+            }
+            catch (Exception ex)
+            {
+                result.ParsingError = ex.Message;
+            }
+           
+            return result;
         }
 
         public async Task<List<Weight>> GetModelWeights(string region, string model, int? maxEntries = null)

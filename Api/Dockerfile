@@ -30,4 +30,6 @@ RUN dotnet publish "./Api.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:Use
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
+LABEL org.opencontainers.image.title="lswiderski/yet-another-xiaomi-cloud-client-api"
+LABEL org.opencontainers.image.description="Yet Another Xiaomi Cloud Client API"
 ENTRYPOINT ["dotnet", "Api.dll"]
