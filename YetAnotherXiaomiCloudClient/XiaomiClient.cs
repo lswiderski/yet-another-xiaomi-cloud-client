@@ -1,4 +1,5 @@
 using Flurl.Http;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -452,8 +453,55 @@ namespace YetAnotherXiaomiCloudClient
         public long UnmarshalScaleData(byte[] data, List<Weight> weights)
         {
             if (weights == null) throw new ArgumentNullException(nameof(weights));
-
             using var doc = JsonDocument.Parse(data);
+            var root = doc.RootElement;
+
+            var items = new List<ScaleDataItem>();
+
+            foreach (var item in root.EnumerateArray())
+            {
+                items.Add(new ScaleDataItem
+                {
+                    Model = GetStringProperty(item, "model"),
+                    Uid = GetInt64Property(item, "uid"),
+                    AccountId = GetInt64Property(item, "accountId"),
+                    Did = GetStringProperty(item, "did"),
+                    CreateTime = GetInt64Property(item, "createTime"),
+                    Data = GetStringProperty(item, "data"),
+                    DataVersion = GetIntProperty(item, "dataVersion"),
+                    Sn = GetStringProperty(item, "sn"),
+                    FromSource = GetIntProperty(item, "fromSource")
+                });
+            }
+
+            foreach (var v1 in items)
+            {
+                switch (v1.FromSource)
+                {
+                    case 1:
+                        ParseFromSource1(v1, weights);
+                        break;
+                    case 2:
+                        ParseFromSource2(v1, weights);
+                        break;
+                    case 3:
+                        ParseFromSource3(v1, weights);
+                        break;
+                }
+            }
+
+            if (items.Count < 20)
+                return 0;
+
+            return items[19].CreateTime;
+        }
+
+        public long UnmarshalScaleDataString(string data, List<Weight> weights)
+        {
+            byte[] bytes = Convert.FromBase64String(data);
+            string jsonText = Encoding.UTF8.GetString(bytes);
+
+            using var doc = JsonDocument.Parse(jsonText);
             var root = doc.RootElement;
 
             var items = new List<ScaleDataItem>();
@@ -592,9 +640,9 @@ namespace YetAnotherXiaomiCloudClient
                 var w = new Weight
                 {
                     Date = DateTimeOffset.FromUnixTimeMilliseconds(ParseInt64(GetStringProperty(root, "time"))).UtcDateTime,
-                    WeightKg = ParseFloat(GetStringProperty(root, "weight")),
-                    BMI = ParseFloat(GetStringProperty(root, "bmi")),
-                    HeartRate = GetInt(root, "heartRate"),
+                    WeightKg = ParseAnyFloat(root, "weight"),
+                    BMI = ParseAnyFloat(root, "bmi"),
+                    HeartRate = ParseAnyInt(root, "heartRate"),
                     Source = v1.Did
                 };
 
@@ -640,8 +688,19 @@ namespace YetAnotherXiaomiCloudClient
         private static string GetStringProperty(JsonElement el, string name)
         {
             if (!el.TryGetProperty(name, out var p)) return string.Empty;
-            if (p.ValueKind == JsonValueKind.String) return p.GetString() ?? string.Empty;
-            return string.Empty;
+            switch (p.ValueKind)
+            {
+                case JsonValueKind.String:
+                    return p.GetString() ?? string.Empty;
+                case JsonValueKind.Number:
+                case JsonValueKind.True:
+                case JsonValueKind.False:
+                case JsonValueKind.Object:
+                case JsonValueKind.Array:
+                    return p.GetRawText();
+                default:
+                    return string.Empty;
+            }
         }
 
         private static int GetIntProperty(JsonElement el, string name)
@@ -660,20 +719,20 @@ namespace YetAnotherXiaomiCloudClient
 
         private static int ParseInt(string s)
         {
-            if (string.IsNullOrEmpty(s)) return 0;
-            return int.TryParse(s, out var i) ? i : 0;
+            if (string.IsNullOrWhiteSpace(s)) return 0;
+            return int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var i) ? i : 0;
         }
 
         private static long ParseInt64(string s)
         {
-            if (string.IsNullOrEmpty(s)) return 0;
-            return long.TryParse(s, out var i) ? i : 0;
+            if (string.IsNullOrWhiteSpace(s)) return 0;
+            return long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var i) ? i : 0;
         }
 
         private static float ParseFloat(string s)
         {
-            if (string.IsNullOrEmpty(s)) return 0f;
-            return float.TryParse(s, out var f) ? f : 0f;
+            if (string.IsNullOrWhiteSpace(s)) return 0f;
+            return float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var f) ? f : 0f;
         }
 
         private static int ParseAnyInt(JsonElement el, string name)
@@ -684,7 +743,7 @@ namespace YetAnotherXiaomiCloudClient
                 case JsonValueKind.String:
                     return ParseInt(p.GetString() ?? string.Empty);
                 case JsonValueKind.Number:
-                    return p.GetInt32();
+                    return p.TryGetInt32(out var i) ? i : 0;
                 default:
                     return 0;
             }
@@ -698,7 +757,7 @@ namespace YetAnotherXiaomiCloudClient
                 case JsonValueKind.String:
                     return ParseFloat(p.GetString() ?? string.Empty);
                 case JsonValueKind.Number:
-                    return p.GetSingle();
+                    return p.TryGetSingle(out var f) ? f : 0f;
                 default:
                     return 0f;
             }
